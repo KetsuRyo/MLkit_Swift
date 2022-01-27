@@ -1,13 +1,8 @@
-//
-//  ViewController.swift
-//  ScanAway
-//
-//  Created by Mohamed Attar on 28/08/2021.
-//
-
 import UIKit
 import Vision
 import MLKitEntityExtraction
+import CoreLocation
+import MapKit
 
 
 class HomeViewController: UIViewController {
@@ -16,7 +11,7 @@ class HomeViewController: UIViewController {
     let scanButton = UIButton()
     
     let vc = UIImagePickerController()
-    let segmentControl = UISegmentedControl (items: ["Apple's Vision", "Google's MLKit"])
+    let segmentControl = UISegmentedControl (items: ["Chinese", "English"])
     
     var imageToS: UIImage?
     
@@ -24,8 +19,20 @@ class HomeViewController: UIViewController {
     
     let waitingAlert = UIAlertController(title: "Scanning...", message: nil, preferredStyle: .alert)
     
+    
+    // Jason
+    var entityExtractor = EntityExtractor.entityExtractor(
+      options: EntityExtractorOptions(modelIdentifier: EntityExtractionModelIdentifier.english))
+    var entityChineseExtractor = EntityExtractor.entityExtractor(
+      options: EntityExtractorOptions(modelIdentifier: EntityExtractionModelIdentifier.chinese))
+    
+    
+    
     override func viewDidLoad() {
         super.viewDidLoad()
+        
+        
+        
         title = "Scan Away!"
         view.backgroundColor = .systemBackground
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "Reset", style: .plain, target: self, action: #selector(reset))
@@ -106,27 +113,20 @@ class HomeViewController: UIViewController {
             
 
             switch self.segmentControl.selectedSegmentIndex {
+
+                
+                
             case 0:
-                DispatchQueue.global().async {
-                    imageToScan.vision { text in
-                        DispatchQueue.main.async {
-                            self.waitingAlert.dismiss(animated: true) {
-                                print(text)
-                                scannedVC.text = text
-                                self.navigationController?.pushViewController(scannedVC, animated: true)
-                            }
-                        }
-                    }
-                }
+                
+                    imageToScan.googleChineseMLKit { text in
+                        self.downloadModelAndChineseAnnotate(text: text)                    }
+                
+                
             default:
                 imageToScan.googleMLKit { text in
-                    self.waitingAlert.dismiss(animated: true) {
-                        print(text)
-                        self.inspectText(viewController: scannedVC,result2: text)
-                        //   scannedVC.text = text
-                        self.navigationController?.pushViewController(scannedVC, animated: true)
-                    }
-                   
+               
+                    self.downloadModelAndAnnotate(text: text)
+                    
                 }
             }
             
@@ -148,35 +148,6 @@ class HomeViewController: UIViewController {
         
         addImage.translatesAutoresizingMaskIntoConstraints = false
         scanButton.translatesAutoresizingMaskIntoConstraints = false
-    }
-    open func inspectText(viewController: UIViewController, result2: String) {
-        let options = EntityExtractorOptions(modelIdentifier: EntityExtractionModelIdentifier.english)
-        let entityExtractor = EntityExtractor.entityExtractor(options: options)
-        entityExtractor.downloadModelIfNeeded(completion: {_ in
-                  // If the error is nil, the download completed successfully.
-                })
-        entityExtractor.annotateText(
-            result2,
-            completion: {
-                res, error in
-                if (res != nil){
-                    for annotation in res! {
-                        let entities = annotation.entities
-                        for entity in entities {
-                            switch entity.entityType {
-                                case EntityType.phone:
-                                ScannedViewController().text.append(entity.description)
-                                case EntityType.address:
-                                ScannedViewController().text.append(entity.description)
-                                              // Add additional cases as needed.
-                                default:
-                                print("Entity: %@", entity);
-                                }
-                        }
-                }
-            }
-            }
-        )
     }
     
     func createMenu() -> UIMenu {
@@ -200,6 +171,130 @@ class HomeViewController: UIViewController {
         generator.impactOccurred()
         print("button tapped")
     }
+
+    
+    // ---------------------------------------
+    func downloadModelAndChineseAnnotate(text: String) {
+
+        let extractor = entityChineseExtractor
+        extractor.downloadModelIfNeeded(completion: {
+          [weak self]
+          error in
+          guard let self = self else { return }
+          guard error == nil else {
+            print("Failed to download model with error \(error!)")
+            return
+          }
+          self.annotateText(text: text, extractor: extractor)
+        })
+    }
+    
+    
+    
+    
+    func downloadModelAndAnnotate(text: String) {
+
+        let extractor = entityExtractor
+        extractor.downloadModelIfNeeded(completion: {
+          [weak self]
+          error in
+          guard let self = self else { return }
+          guard error == nil else {
+            print("Failed to download model with error \(error!)")
+            return
+          }
+          self.annotateText(text: text, extractor: extractor)
+        })
+    }
+    func coordinates(forAddress address: String, completion: @escaping (CLLocationCoordinate2D?) -> Void) {
+        let geocoder = CLGeocoder()
+        geocoder.geocodeAddressString(address) {
+            (placemarks, error) in
+            guard error == nil else {
+                print("Geocoding error: \(error!)")
+                completion(nil)
+                return
+            }
+            completion(placemarks?.first?.location?.coordinate)
+        }
+    }
+    
+    func annotateText(text: String,  extractor: EntityExtractor!) {
+
+        extractor.annotateText(text, completion: {
+            
+            [weak self]
+            result, error in
+            
+            guard let result = result else {
+              print("Result is nil.")
+              return
+            }
+            if result.count == 0 {
+                print("Result is empty.")
+            } else {
+                
+              for annotation in result {
+
+                  let annotationString = AnnotationUtil().stringFromAnnotation(annotation: annotation)
+                  if (annotationString == "phone") {
+                      let textLocation = annotation.range.location
+                      let textLength = annotation.range.length
+                      let start = text.index(text.startIndex, offsetBy: textLocation)
+                      let endNumber = text.count - textLocation - textLength
+                      let endLocation = 0 - endNumber
+                      let end = text.index(text.endIndex, offsetBy: endLocation)
+                      let range = start..<end
+
+                      let phoneNumber = text[range]
+                      self!.waitingAlert.dismiss(animated: true) {
+                          if let url = URL(string: "tel://\(phoneNumber)") {
+                              UIApplication.shared.openURL(url)
+                          };
+                     //     self?.navigationController?.pushViewController(ScannedViewController(), animated: true)
+                      }
+                  }else if (annotationString == "address") {
+                      
+                      let textLocation = annotation.range.location
+                      let textLength = annotation.range.length
+                      let start = text.index(text.startIndex, offsetBy: textLocation)
+                      let endNumber = text.count - textLocation - textLength
+                      let endLocation = 0 - endNumber
+                      let end = text.index(text.endIndex, offsetBy: endLocation)
+                      let range = start..<end
+
+                      let address = text[range]
+                      
+                     self!.waitingAlert.dismiss(animated: true) { [self] in
+                          
+                      
+                              
+                             let refreshAlert = UIAlertController(title: "Search?", message: String(address), preferredStyle: UIAlertController.Style.alert)
+
+                              refreshAlert.addAction(UIAlertAction(title: "Ok", style: .default, handler: { (action: UIAlertAction) in
+                                  let url = "http://maps.google.co.in/maps?q=\(String(address))"
+                                  let objectUrl = URL(string:url.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)!)
+                                  UIApplication.shared.openURL(objectUrl!)
+                              }))
+
+                              refreshAlert.addAction(UIAlertAction(title: "Cancel", style: .cancel, handler: { (action: UIAlertAction!) in
+                                  print("Handle Cancel Logic here")
+                              }))
+
+                              self!.present(refreshAlert, animated: true, completion: nil)
+                              
+                            
+                          
+                 
+                      }
+                      
+                  }
+                  
+              }
+            }
+        })
+    }
+    
     
 }
 
@@ -214,7 +309,6 @@ extension HomeViewController: UIImagePickerControllerDelegate, UINavigationContr
         }
         
         picker.dismiss(animated: true) {
-            //            self.navigationController?.pushViewController(scannedVC, animated: true)
         }
     }
     

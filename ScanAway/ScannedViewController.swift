@@ -1,9 +1,3 @@
-//
-//  ScannedViewController.swift
-//  ScannedViewController
-//
-//  Created by Mohamed Attar on 28/08/2021.
-//
 
 import UIKit
 
